@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Robin Hood 3D Runner</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0d120c;
+    overflow: hidden;
+    height: 100%;
+    font-family: 'Georgia', 'Times New Roman', serif;
+  }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    padding: 16px 24px;
+    color: #d8cfb8;
+    font-size: 20px;
+    letter-spacing: 1px;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.9);
+    pointer-events: none;
+  }
+  #hud .gold { color: #e0a83c; }
+
+  #hint {
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #a89a7c;
+    font-size: 12px;
+    text-align: center;
+    pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(20,14,8,0.75) 0%, rgba(5,4,2,0.95) 100%);
+    color: #d8cfb8;
+    text-align: center;
+  }
+  #overlay h1 {
+    font-size: 42px;
+    color: #b5432b;
+    letter-spacing: 3px;
+    margin: 0 0 12px;
+    text-transform: uppercase;
+  }
+  #overlay p { margin: 6px 0; font-size: 18px; }
+  #overlay .gold { color: #e0a83c; }
+  #overlay .restart {
+    margin-top: 20px;
+    font-size: 15px;
+    color: #8f8368;
+    border: 1px solid #5a5240;
+    padding: 8px 18px;
+    letter-spacing: 2px;
+  }
+
+  #startScreen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #0d120c;
+    color: #d8cfb8;
+    text-align: center;
+    z-index: 10;
+  }
+  #startScreen h1 {
+    font-size: 40px;
+    color: #b5432b;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  #startScreen p { color: #8f8368; margin: 4px 0; font-size: 14px; letter-spacing: 1px; }
+  #startScreen .go {
+    margin-top: 24px;
+    padding: 10px 26px;
+    border: 1px solid #b5432b;
+    color: #d8cfb8;
+    letter-spacing: 3px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<div id="startScreen">
+  <h1>Robin Hood</h1>
+  <p>A / D or &larr; / &rarr; &mdash; change lane</p>
+  <p>W or &uarr; &mdash; jump &nbsp;&bull;&nbsp; S or &darr; &mdash; slide</p>
+  <p>Space &mdash; loose an arrow</p>
+  <div class="go" id="startBtn">Enter the Forest</div>
+</div>
+
+<div id="hud" style="display:none;">
+  <div id="distance">Distance: 0m</div>
+  <div class="gold" id="gold">Gold: 0</div>
+</div>
+
+<div id="hint" style="display:none;">A/D move &bull; W jump &bull; S slide &bull; Space shoot &bull; R restart</div>
+
+<div id="overlay">
+  <h1>You Have Fallen</h1>
+  <p id="finalDistance">Distance: 0m</p>
+  <p class="gold" id="finalGold">Gold: 0</p>
+  <div class="restart">Press R to try again</div>
+</div>
+
+<!-- Three.js via CDN, classic (non-module) build. No other libraries. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =============================================================================
+   ROBIN HOOD 3D RUNNER
+   Low-poly, third-person endless runner built with plain Three.js.
+   Dark medieval forest: muted greens/browns, torch-orange accents, fog.
+   ============================================================================= */
+
+// ---------------------------------------------------------------------------
+// Renderer / Scene / Camera
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.5;
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.body.appendChild(renderer.domElement);
+
+const FOG_COLOR = 0x232a1d;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(FOG_COLOR);
+scene.fog = new THREE.FogExp2(FOG_COLOR, 0.02);
+
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 200);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------------------------------------------------------------------------
+// Lighting: dim moody ambient + a cool "moon" directional light + torch glow
+// ---------------------------------------------------------------------------
+const ambient = new THREE.AmbientLight(0x5c6a52, 1.7);
+scene.add(ambient);
+
+const moon = new THREE.DirectionalLight(0x9aa88c, 1.3);
+moon.position.set(-6, 14, -4);
+moon.castShadow = true;
+moon.shadow.mapSize.set(1024, 1024);
+moon.shadow.camera.left = -20;
+moon.shadow.camera.right = 20;
+moon.shadow.camera.top = 20;
+moon.shadow.camera.bottom = -20;
+moon.shadow.camera.far = 60;
+scene.add(moon);
+scene.add(moon.target);
+
+// A warm torch-orange point light that travels with the player for accent color
+const torchLight = new THREE.PointLight(0xff8a3d, 1.1, 9, 2);
+torchLight.position.set(0, 2.2, 1.5);
+scene.add(torchLight);
+
+// ---------------------------------------------------------------------------
+// Materials & geometries (shared/reused for performance, flat-shaded low-poly)
+// ---------------------------------------------------------------------------
+const MAT = {
+  dirt: new THREE.MeshStandardMaterial({ color: 0x5f4a34, flatShading: true, roughness: 1 }),
+  grass: new THREE.MeshStandardMaterial({ color: 0x384a2a, flatShading: true, roughness: 1 }),
+  foliage: new THREE.MeshStandardMaterial({ color: 0x35502f, flatShading: true, roughness: 1 }),
+  foliageDark: new THREE.MeshStandardMaterial({ color: 0x293d24, flatShading: true, roughness: 1 }),
+  trunk: new THREE.MeshStandardMaterial({ color: 0x4a3624, flatShading: true, roughness: 1 }),
+  rock: new THREE.MeshStandardMaterial({ color: 0x54544c, flatShading: true, roughness: 1 }),
+  stone: new THREE.MeshStandardMaterial({ color: 0x6b6b63, flatShading: true, roughness: 1 }),
+  log: new THREE.MeshStandardMaterial({ color: 0x5a3d22, flatShading: true, roughness: 1 }),
+  logEnd: new THREE.MeshStandardMaterial({ color: 0x7a5a34, flatShading: true, roughness: 1 }),
+  branch: new THREE.MeshStandardMaterial({ color: 0x352415, flatShading: true, roughness: 1 }),
+  hood: new THREE.MeshStandardMaterial({ color: 0x33472f, flatShading: true, roughness: 0.9 }),
+  tunic: new THREE.MeshStandardMaterial({ color: 0x4a3728, flatShading: true, roughness: 0.9 }),
+  boots: new THREE.MeshStandardMaterial({ color: 0x241a10, flatShading: true, roughness: 0.9 }),
+  skin: new THREE.MeshStandardMaterial({ color: 0xa9835f, flatShading: true, roughness: 0.9 }),
+  bow: new THREE.MeshStandardMaterial({ color: 0x2b1d10, flatShading: true, roughness: 0.8 }),
+  armor: new THREE.MeshStandardMaterial({ color: 0x53595c, flatShading: true, roughness: 0.6, metalness: 0.3 }),
+  armorDark: new THREE.MeshStandardMaterial({ color: 0x34383a, flatShading: true, roughness: 0.6, metalness: 0.3 }),
+  guardFace: new THREE.MeshStandardMaterial({ color: 0x24211d, flatShading: true }),
+  gold: new THREE.MeshStandardMaterial({ color: 0xd8ac3f, flatShading: true, roughness: 0.35, metalness: 0.6 }),
+  arrowShaft: new THREE.MeshStandardMaterial({ color: 0x3a2a18, flatShading: true }),
+  arrowHead: new THREE.MeshStandardMaterial({ color: 0x9a9a94, flatShading: true, metalness: 0.5, roughness: 0.4 }),
+};
+
+// ---------------------------------------------------------------------------
+// Lane / world constants
+// ---------------------------------------------------------------------------
+const LANE_WIDTH = 3;
+const LANES = [-LANE_WIDTH, 0, LANE_WIDTH];
+const PLAYER_Z = 0;          // player stays fixed; the world scrolls toward it
+const CAMERA_OFFSET = new THREE.Vector3(0, 3.4, 6.4);
+const GRAVITY = 34;
+const JUMP_SPEED = 13;
+const SLIDE_DURATION = 0.5;
+const SPAWN_Z = -70;         // where new gameplay entities appear
+const DESPAWN_Z = 6;         // where entities are removed after passing the player
+const RUIN_DISTANCE = 260;   // distance after which castle ruins start appearing
+
+// ---------------------------------------------------------------------------
+// Ground: dirt path with grass verges, built from recycled scrolling segments
+// ---------------------------------------------------------------------------
+const groundGroup = new THREE.Group();
+scene.add(groundGroup);
+
+// Declared early: read by populateSegmentDecor() while the initial ground
+// segments are built below, before the full game-state block further down.
+let distance = 0;
+
+const SEGMENT_LENGTH = 30;
+const SEGMENT_COUNT = 8;
+const groundSegments = [];
+
+function buildGroundSegment(z) {
+  const seg = new THREE.Group();
+  seg.position.z = z;
+
+  const path = new THREE.Mesh(new THREE.PlaneGeometry(6.4, SEGMENT_LENGTH + 0.5), MAT.dirt);
+  path.rotation.x = -Math.PI / 2;
+  path.receiveShadow = true;
+  seg.add(path);
+
+  const leftGrass = new THREE.Mesh(new THREE.PlaneGeometry(20, SEGMENT_LENGTH + 0.5), MAT.grass);
+  leftGrass.rotation.x = -Math.PI / 2;
+  leftGrass.position.set(-13.2, -0.02, 0);
+  leftGrass.receiveShadow = true;
+  seg.add(leftGrass);
+
+  const rightGrass = leftGrass.clone();
+  rightGrass.position.x = 13.2;
+  seg.add(rightGrass);
+
+  seg.decor = new THREE.Group();
+  seg.add(seg.decor);
+  populateSegmentDecor(seg);
+
+  return seg;
+}
+
+function makeTree() {
+  const tree = new THREE.Group();
+  const trunkH = 1.8 + Math.random() * 1.4;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, trunkH, 6), MAT.trunk);
+  trunk.position.y = trunkH / 2;
+  trunk.castShadow = true;
+  tree.add(trunk);
+
+  const foliageMat = Math.random() > 0.5 ? MAT.foliage : MAT.foliageDark;
+  const tiers = 2 + Math.floor(Math.random() * 2);
+  let h = trunkH;
+  for (let i = 0; i < tiers; i++) {
+    const r = 1.5 - i * 0.35 + Math.random() * 0.2;
+    const coneH = 1.6 - i * 0.2;
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(r, coneH, 6), foliageMat);
+    cone.position.y = h + coneH * 0.42;
+    cone.castShadow = true;
+    tree.add(cone);
+    h += coneH * 0.55;
+  }
+  const s = 0.8 + Math.random() * 0.6;
+  tree.scale.set(s, s, s);
+  return tree;
+}
+
+function makeRock() {
+  const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5 + Math.random() * 0.4, 0), MAT.rock);
+  rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+  rock.position.y = 0.25;
+  rock.castShadow = true;
+  return rock;
+}
+
+function makeRoot() {
+  const root = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.14, 0.3), MAT.trunk);
+  root.rotation.y = Math.random() * Math.PI;
+  root.position.y = 0.05;
+  return root;
+}
+
+function makeRuinPillar() {
+  const g = new THREE.Group();
+  const h = 1.5 + Math.random() * 2.5;
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.5, h, 6), MAT.stone);
+  pillar.position.y = h / 2;
+  pillar.rotation.z = (Math.random() - 0.5) * 0.15;
+  pillar.castShadow = true;
+  g.add(pillar);
+  return g;
+}
+
+function makeRuinWall() {
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(3 + Math.random() * 2, 1 + Math.random() * 1.5, 0.6), MAT.stone);
+  wall.position.y = wall.geometry.parameters.height / 2;
+  wall.castShadow = true;
+  return wall;
+}
+
+// Torch mounted near the path for orange accent lighting in the dark
+function makeTorch() {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.6, 5), MAT.trunk);
+  pole.position.y = 0.8;
+  g.add(pole);
+  const flameGeo = new THREE.ConeGeometry(0.14, 0.35, 6);
+  const flameMat = new THREE.MeshStandardMaterial({ color: 0xff7a2e, emissive: 0xff5c1a, emissiveIntensity: 1.4, flatShading: true });
+  const flame = new THREE.Mesh(flameGeo, flameMat);
+  flame.position.y = 1.7;
+  g.add(flame);
+  const light = new THREE.PointLight(0xff7a30, 0.8, 6, 2);
+  light.position.y = 1.7;
+  g.add(light);
+  return g;
+}
+
+function populateSegmentDecor(seg) {
+  const ruinsActive = distance > RUIN_DISTANCE;
+  const count = 5 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < count; i++) {
+    const side = Math.random() > 0.5 ? 1 : -1;
+    const x = side * (4.4 + Math.random() * 9);
+    const z = (Math.random() - 0.5) * SEGMENT_LENGTH;
+    let obj;
+    const roll = Math.random();
+    if (ruinsActive && roll < 0.22) {
+      obj = Math.random() > 0.5 ? makeRuinPillar() : makeRuinWall();
+    } else if (roll < 0.72) {
+      obj = makeTree();
+    } else if (roll < 0.88) {
+      obj = makeRock();
+    } else {
+      obj = makeRoot();
+    }
+    obj.position.set(x, 0, z);
+    seg.decor.add(obj);
+  }
+  // Occasional torch close to the path for atmosphere
+  if (Math.random() < 0.35) {
+    const torch = makeTorch();
+    const side = Math.random() > 0.5 ? 1 : -1;
+    torch.position.set(side * 3.6, 0, (Math.random() - 0.5) * SEGMENT_LENGTH);
+    seg.decor.add(torch);
+  }
+}
+
+function refreshSegmentDecor(seg) {
+  seg.remove(seg.decor);
+  disposeGroup(seg.decor);
+  seg.decor = new THREE.Group();
+  seg.add(seg.decor);
+  populateSegmentDecor(seg);
+}
+
+function disposeGroup(group) {
+  group.traverse((obj) => {
+    if (obj.isMesh) {
+      obj.geometry.dispose();
+    }
+  });
+}
+
+for (let i = 0; i < SEGMENT_COUNT; i++) {
+  const seg = buildGroundSegment(-i * SEGMENT_LENGTH);
+  groundSegments.push(seg);
+  groundGroup.add(seg);
+}
+
+// ---------------------------------------------------------------------------
+// Player: low-poly hooded archer (not cute -- angular, serious proportions)
+// ---------------------------------------------------------------------------
+const player = new THREE.Group();
+player.position.set(0, 0, PLAYER_Z);
+scene.add(player);
+
+const playerModel = new THREE.Group();
+player.add(playerModel);
+
+const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.8, 0.4), MAT.tunic);
+torso.position.y = 1.0;
+torso.castShadow = true;
+playerModel.add(torso);
+
+const chest = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.34, 0.44), MAT.hood);
+chest.position.y = 1.28;
+chest.castShadow = true;
+playerModel.add(chest);
+
+const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), MAT.skin);
+head.position.y = 1.62;
+head.castShadow = true;
+playerModel.add(head);
+
+const hood = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.5, 5), MAT.hood);
+hood.position.y = 1.78;
+hood.rotation.y = Math.PI / 5;
+hood.castShadow = true;
+playerModel.add(hood);
+
+const legL = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.62, 0.28), MAT.tunic);
+legL.position.set(-0.16, 0.5, 0);
+legL.castShadow = true;
+playerModel.add(legL);
+const legR = legL.clone();
+legR.position.x = 0.16;
+playerModel.add(legR);
+
+const bootL = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.34), MAT.boots);
+bootL.position.set(-0.16, 0.13, 0.03);
+bootL.castShadow = true;
+playerModel.add(bootL);
+const bootR = bootL.clone();
+bootR.position.x = 0.16;
+playerModel.add(bootR);
+
+const armL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.6, 0.2), MAT.tunic);
+armL.position.set(-0.44, 1.05, 0);
+armL.castShadow = true;
+playerModel.add(armL);
+const armR = armL.clone();
+armR.position.x = 0.44;
+playerModel.add(armR);
+
+// Bow, slung on the character's back/side
+const bow = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.03, 6, 10, Math.PI * 1.3), MAT.bow);
+bow.position.set(0.5, 1.05, -0.05);
+bow.rotation.y = Math.PI / 2;
+bow.castShadow = true;
+playerModel.add(bow);
+
+playerModel.position.y = 0; // base rig anchor
+
+// ---------------------------------------------------------------------------
+// Guard (blocky armored enemy)
+// ---------------------------------------------------------------------------
+function makeGuard() {
+  const g = new THREE.Group();
+
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.86, 0.46), MAT.armor);
+  torso.position.y = 1.02;
+  torso.castShadow = true;
+  g.add(torso);
+
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.14, 0.5), MAT.armorDark);
+  belt.position.y = 0.62;
+  g.add(belt);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.32, 0.34), MAT.guardFace);
+  head.position.y = 1.62;
+  head.castShadow = true;
+  g.add(head);
+
+  const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.4), MAT.armorDark);
+  helmet.position.y = 1.82;
+  helmet.castShadow = true;
+  g.add(helmet);
+
+  const plume = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.3, 4), new THREE.MeshStandardMaterial({ color: 0xb5432b, flatShading: true }));
+  plume.position.y = 2.04;
+  g.add(plume);
+
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.6, 0.3), MAT.armorDark);
+  legL.position.set(-0.18, 0.3, 0);
+  legL.castShadow = true;
+  g.add(legL);
+  const legR = legL.clone();
+  legR.position.x = 0.18;
+  g.add(legR);
+
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.62, 0.22), MAT.armor);
+  armL.position.set(-0.48, 1.02, 0);
+  armL.castShadow = true;
+  g.add(armL);
+  const armR = armL.clone();
+  armR.position.x = 0.48;
+  g.add(armR);
+
+  // Spear held forward -- reads as a threat silhouette even far away
+  const spear = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 5), MAT.trunk);
+  spear.rotation.z = Math.PI / 2;
+  spear.position.set(0.2, 1.1, 0.4);
+  g.add(spear);
+  const spearHead = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 4), MAT.arrowHead);
+  spearHead.rotation.z = -Math.PI / 2;
+  spearHead.position.set(1.0, 1.1, 0.4);
+  g.add(spearHead);
+
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// Obstacles: fallen logs (jump) and low branches / gates (slide)
+// ---------------------------------------------------------------------------
+function makeLog(spanAllLanes) {
+  const g = new THREE.Group();
+  const length = spanAllLanes ? LANE_WIDTH * 2 + 2.4 : 2.2;
+  const log = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, length, 8), MAT.log);
+  log.rotation.z = Math.PI / 2;
+  log.position.y = 0.4;
+  log.castShadow = true;
+  g.add(log);
+  const endCapGeo = new THREE.CylinderGeometry(0.39, 0.39, 0.06, 8);
+  const capL = new THREE.Mesh(endCapGeo, MAT.logEnd);
+  capL.rotation.z = Math.PI / 2;
+  capL.position.set(-length / 2, 0.4, 0);
+  g.add(capL);
+  const capR = capL.clone();
+  capR.position.x = length / 2;
+  g.add(capR);
+  return g;
+}
+
+function makeBranch(spanAllLanes) {
+  const g = new THREE.Group();
+  const length = spanAllLanes ? LANE_WIDTH * 2 + 2.4 : 2.2;
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(length, 0.3, 0.3), MAT.branch);
+  beam.position.y = 1.55;
+  beam.castShadow = true;
+  g.add(beam);
+  // hanging twigs for silhouette
+  const twigCount = spanAllLanes ? 7 : 3;
+  for (let i = 0; i < twigCount; i++) {
+    const twig = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.4 + Math.random() * 0.3, 0.06), MAT.branch);
+    twig.position.set(-length / 2 + (i + 0.5) * (length / twigCount), 1.15, 0);
+    g.add(twig);
+  }
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// Coin
+// ---------------------------------------------------------------------------
+function makeCoin() {
+  const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 10), MAT.gold);
+  coin.rotation.x = Math.PI / 2;
+  coin.position.y = 1.1;
+  coin.castShadow = true;
+  return coin;
+}
+
+// ---------------------------------------------------------------------------
+// Arrow (player projectile)
+// ---------------------------------------------------------------------------
+function makeArrow() {
+  const g = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.9, 5), MAT.arrowShaft);
+  shaft.rotation.x = Math.PI / 2;
+  g.add(shaft);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 5), MAT.arrowHead);
+  tip.rotation.x = -Math.PI / 2;
+  tip.position.z = -0.53;
+  g.add(tip);
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// Game state
+// ---------------------------------------------------------------------------
+let running = false;
+let started = false;
+let lane = 1;
+let playerX = LANES[1];
+let isJumping = false, jumpVel = 0, jumpY = 0;
+let isSliding = false, slideTimer = 0;
+let speed = 11;
+const BASE_SPEED = 11;
+let gold = 0;
+let spawnTimer = 0;
+let spawnInterval = 1.15;
+let ruinsUnlocked = false;
+
+let obstacles = [];  // { mesh, lane(s): [idx...], type: 'log'|'branch', z, checked }
+let guards = [];      // { mesh, lane, z, alive }
+let coins = [];       // { mesh, lane, z }
+let arrows = [];      // { mesh, lane, z }
+
+const hudDistance = document.getElementById('distance');
+const hudGold = document.getElementById('gold');
+const overlay = document.getElementById('overlay');
+const finalDistance = document.getElementById('finalDistance');
+const finalGold = document.getElementById('finalGold');
+const hudEl = document.getElementById('hud');
+const hintEl = document.getElementById('hint');
+const startScreen = document.getElementById('startScreen');
+
+function resetGame() {
+  // Clear dynamic entities
+  for (const o of obstacles) scene.remove(o.mesh);
+  for (const g of guards) scene.remove(g.mesh);
+  for (const c of coins) scene.remove(c.mesh);
+  for (const a of arrows) scene.remove(a.mesh);
+  obstacles = []; guards = []; coins = []; arrows = [];
+
+  lane = 1;
+  playerX = LANES[1];
+  isJumping = false; jumpVel = 0; jumpY = 0;
+  isSliding = false; slideTimer = 0;
+  speed = BASE_SPEED;
+  distance = 0;
+  gold = 0;
+  spawnTimer = 0;
+  spawnInterval = 1.15;
+  ruinsUnlocked = false;
+
+  playerModel.rotation.set(0, 0, 0);
+  playerModel.scale.set(1, 1, 1);
+
+  overlay.style.display = 'none';
+  hudEl.style.display = 'flex';
+  hintEl.style.display = 'block';
+  running = true;
+}
+
+function gameOver() {
+  running = false;
+  finalDistance.textContent = 'Distance: ' + Math.floor(distance) + 'm';
+  finalGold.textContent = 'Gold: ' + gold;
+  overlay.style.display = 'flex';
+}
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+const keys = {};
+window.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (['arrowleft','arrowright','arrowup','arrowdown',' ','a','d','w','s','r'].includes(k)) {
+    e.preventDefault();
+  }
+  if (!started) return;
+  if (!running) {
+    if (k === 'r') resetGame();
+    return;
+  }
+  if (keys[k]) return;
+  keys[k] = true;
+
+  if (k === 'arrowleft' || k === 'a') changeLane(-1);
+  else if (k === 'arrowright' || k === 'd') changeLane(1);
+  else if (k === 'arrowup' || k === 'w') startJump();
+  else if (k === 'arrowdown' || k === 's') startSlide();
+  else if (k === ' ') shootArrow();
+});
+window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  started = true;
+  startScreen.style.display = 'none';
+  resetGame();
+});
+
+function changeLane(dir) {
+  lane = Math.min(2, Math.max(0, lane + dir));
+}
+
+function startJump() {
+  if (isJumping || isSliding) return;
+  isJumping = true;
+  jumpVel = JUMP_SPEED;
+}
+
+function startSlide() {
+  if (isJumping) return;
+  isSliding = true;
+  slideTimer = SLIDE_DURATION;
+}
+
+function shootArrow() {
+  const mesh = makeArrow();
+  mesh.position.set(playerX, 1.1, player.position.z - 0.6);
+  scene.add(mesh);
+  arrows.push({ mesh, lane, z: mesh.position.z });
+}
+
+// ---------------------------------------------------------------------------
+// Spawning gameplay entities
+// ---------------------------------------------------------------------------
+function spawnEntity() {
+  const roll = Math.random();
+  const laneIdx = Math.floor(Math.random() * 3);
+
+  if (roll < 0.28) {
+    const spanAll = Math.random() < 0.25;
+    const mesh = makeLog(spanAll);
+    mesh.position.set(spanAll ? 0 : LANES[laneIdx], 0, SPAWN_Z);
+    scene.add(mesh);
+    obstacles.push({ mesh, type: 'log', lanes: spanAll ? [0, 1, 2] : [laneIdx], z: SPAWN_Z, checked: false });
+  } else if (roll < 0.52) {
+    const spanAll = Math.random() < 0.3;
+    const mesh = makeBranch(spanAll);
+    mesh.position.set(spanAll ? 0 : LANES[laneIdx], 0, SPAWN_Z);
+    scene.add(mesh);
+    obstacles.push({ mesh, type: 'branch', lanes: spanAll ? [0, 1, 2] : [laneIdx], z: SPAWN_Z, checked: false });
+  } else if (roll < 0.78) {
+    const mesh = makeGuard();
+    mesh.position.set(LANES[laneIdx], 0, SPAWN_Z);
+    scene.add(mesh);
+    guards.push({ mesh, lane: laneIdx, z: SPAWN_Z, alive: true });
+  } else {
+    const mesh = makeCoin();
+    mesh.position.set(LANES[laneIdx], 1.1, SPAWN_Z);
+    scene.add(mesh);
+    coins.push({ mesh, lane: laneIdx, z: SPAWN_Z });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Update loop
+// ---------------------------------------------------------------------------
+const clock = new THREE.Clock();
+
+function update(dt) {
+  if (!running) return;
+
+  speed = BASE_SPEED + distance * 0.012;
+  speed = Math.min(speed, 30);
+  distance += speed * dt;
+
+  if (!ruinsUnlocked && distance > RUIN_DISTANCE) {
+    ruinsUnlocked = true;
+  }
+
+  // Smooth, snappy lane movement -- weighty but responsive
+  const targetX = LANES[lane];
+  playerX += (targetX - playerX) * Math.min(1, dt * 11);
+  // slight lean into the turn for a sense of weight
+  playerModel.rotation.z = (targetX - playerX) * -0.15;
+
+  // Jump physics
+  if (isJumping) {
+    jumpY += jumpVel * dt;
+    jumpVel -= GRAVITY * dt;
+    if (jumpY <= 0) {
+      jumpY = 0;
+      isJumping = false;
+      jumpVel = 0;
+    }
+  }
+
+  // Slide timer + visual crouch
+  if (isSliding) {
+    slideTimer -= dt;
+    playerModel.scale.y = 0.55;
+    playerModel.position.y = -0.35;
+    if (slideTimer <= 0) isSliding = false;
+  } else {
+    playerModel.scale.y += (1 - playerModel.scale.y) * Math.min(1, dt * 14);
+    playerModel.position.y += (0 - playerModel.position.y) * Math.min(1, dt * 14);
+  }
+
+  player.position.x = playerX;
+  player.position.y = jumpY;
+  // running bob for weight/momentum feel
+  const bob = isJumping ? 0 : Math.sin(distance * 3.4) * 0.05;
+  playerModel.position.y += bob - (isSliding ? 0 : 0);
+
+  torchLight.position.x = playerX;
+  torchLight.position.y = jumpY + 2.2;
+
+  // Spawn
+  spawnTimer += dt;
+  spawnInterval = Math.max(0.55, 1.15 - speed * 0.018);
+  if (spawnTimer >= spawnInterval) {
+    spawnTimer = 0;
+    spawnEntity();
+  }
+
+  const dz = speed * dt;
+
+  // Scroll ground segments and recycle
+  for (const seg of groundSegments) {
+    seg.position.z += dz;
+    if (seg.position.z - SEGMENT_LENGTH / 2 > camera.position.z + 10) {
+      seg.position.z -= SEGMENT_COUNT * SEGMENT_LENGTH;
+      refreshSegmentDecor(seg);
+    }
+  }
+
+  // Obstacles
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    o.z += dz;
+    o.mesh.position.z = o.z;
+    if (!o.checked && o.lanes.includes(lane) && Math.abs(o.z - PLAYER_Z) < 0.55) {
+      o.checked = true;
+      if (o.type === 'log' && !(isJumping && jumpY > 0.55)) {
+        return gameOver();
+      }
+      if (o.type === 'branch' && !isSliding) {
+        return gameOver();
+      }
+    }
+    if (o.z > DESPAWN_Z) {
+      scene.remove(o.mesh);
+      obstacles.splice(i, 1);
+    }
+  }
+
+  // Guards
+  for (let i = guards.length - 1; i >= 0; i--) {
+    const g = guards[i];
+    if (!g.alive) continue;
+    g.z += dz;
+    g.mesh.position.z = g.z;
+    if (g.lane === lane && Math.abs(g.z - PLAYER_Z) < 0.6) {
+      return gameOver();
+    }
+    if (g.z > DESPAWN_Z) {
+      scene.remove(g.mesh);
+      guards.splice(i, 1);
+    }
+  }
+
+  // Coins
+  for (let i = coins.length - 1; i >= 0; i--) {
+    const c = coins[i];
+    c.z += dz;
+    c.mesh.position.z = c.z;
+    c.mesh.rotation.y += dt * 4;
+    if (c.lane === lane && Math.abs(c.z - PLAYER_Z) < 0.6) {
+      gold++;
+      scene.remove(c.mesh);
+      coins.splice(i, 1);
+      continue;
+    }
+    if (c.z > DESPAWN_Z) {
+      scene.remove(c.mesh);
+      coins.splice(i, 1);
+    }
+  }
+
+  // Arrows (move forward, away from player, independent of world scroll)
+  const ARROW_SPEED = 34;
+  for (let i = arrows.length - 1; i >= 0; i--) {
+    const a = arrows[i];
+    a.z -= ARROW_SPEED * dt;
+    a.mesh.position.z = a.z;
+    let hit = false;
+    for (const g of guards) {
+      if (g.alive && g.lane === a.lane && Math.abs(g.z - a.z) < 0.7) {
+        g.alive = false;
+        killGuard(g);
+        hit = true;
+        break;
+      }
+    }
+    if (hit || a.z < SPAWN_Z - 5) {
+      scene.remove(a.mesh);
+      arrows.splice(i, 1);
+    }
+  }
+
+  // Camera follows player with slight lag + roll for a weighty, kinetic feel
+  const camTarget = new THREE.Vector3(
+    player.position.x * 0.6,
+    CAMERA_OFFSET.y + jumpY * 0.3,
+    player.position.z + CAMERA_OFFSET.z
+  );
+  camera.position.lerp(camTarget, Math.min(1, dt * 6));
+  camera.rotation.z = (targetX - playerX) * -0.02;
+  const lookTarget = new THREE.Vector3(player.position.x * 0.3, 1.3, player.position.z - 8);
+  camera.lookAt(lookTarget);
+
+  hudDistance.textContent = 'Distance: ' + Math.floor(distance) + 'm';
+  hudGold.textContent = 'Gold: ' + gold;
+}
+
+function killGuard(g) {
+  // Simple death reaction: topple and sink instead of just vanishing
+  g.mesh.userData.dying = true;
+  const startRot = g.mesh.rotation.x;
+  let t = 0;
+  const anim = () => {
+    t += 0.06;
+    g.mesh.rotation.x = startRot + t * 1.4;
+    g.mesh.position.y = -t * 0.6;
+    if (t < 1 && guards.includes(g)) {
+      requestAnimationFrame(anim);
+    } else {
+      scene.remove(g.mesh);
+      const idx = guards.indexOf(g);
+      if (idx >= 0) guards.splice(idx, 1);
+    }
+  };
+  anim();
+}
+
+// ---------------------------------------------------------------------------
+// Render loop
+// ---------------------------------------------------------------------------
+camera.position.set(0, CAMERA_OFFSET.y, CAMERA_OFFSET.z);
+camera.lookAt(0, 1.3, -8);
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  update(dt);
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
